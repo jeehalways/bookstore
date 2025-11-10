@@ -213,24 +213,24 @@ const completePurchase = (searchQuery, bookId, quantity, paymentMethod) => {
   const originalCart = JSON.parse(JSON.stringify(shoppingCart));
 
   try {
-    // 1. Search for books
+    // Search for books
     const searchResults = searchBooks(searchQuery);
     if (searchResults.length === 0) {
       throw new Error("No books found matching your search");
     }
 
-    // 2. Add to cart
+    // Add to cart
     shoppingCart = {}; // Reset cart for new purchase
     const cart = addToCart(bookId, quantity);
 
-    // 3. Calculate total
+    // Calculate total
     const total = calculateTotal(cart);
 
     if (total <= 0) {
       throw new Error("Invalid cart total");
     }
 
-    // 4. Process payment
+    // Process payment
     const paymentResult = processPayment(total, paymentMethod);
 
     if (!paymentResult.success) {
@@ -283,9 +283,255 @@ const resetInventory = () => {
   bookDatabase[5].stock = 2;
 };
 
-// Helper function to get current cart (for testing)
+// Helper function to get current cart (useful for testing)
 const getCart = () => {
   return JSON.parse(JSON.stringify(shoppingCart));
+};
+
+
+// Phase 4
+// Coupon database
+const couponDatabase = {
+  SAVE10: { type: "percentage", value: 10, minPurchase: 0 },
+  SAVE20: { type: "percentage", value: 20, minPurchase: 50 },
+  FLAT5: { type: "fixed", value: 5, minPurchase: 20 },
+  FREESHIP: { type: "free_shipping", value: 0, minPurchase: 0 },
+};
+
+// Shipping options
+const shippingOptions = {
+  standard: { name: "Standard Shipping", cost: 5.99, days: "5-7" },
+  express: { name: "Express Shipping", cost: 12.99, days: "2-3" },
+  overnight: { name: "Overnight Shipping", cost: 24.99, days: "1" },
+  free: { name: "Free Shipping", cost: 0, days: "7-10" },
+};
+
+// Email notification log (simulated)
+let emailLog = [];
+
+/**
+ * Validates and applies coupon code
+ * @param {string} couponCode - Coupon code to apply
+ * @param {number} subtotal - Subtotal before discount
+ * @returns {Object} Discount information
+ */
+const applyCoupon = (couponCode, subtotal) => {
+  if (!couponCode) {
+    return { valid: false, discount: 0, message: "No coupon provided" };
+  }
+
+  const coupon = couponDatabase[couponCode.toUpperCase()];
+
+  if (!coupon) {
+    return { valid: false, discount: 0, message: "Invalid coupon code" };
+  }
+
+  if (subtotal < coupon.minPurchase) {
+    return {
+      valid: false,
+      discount: 0,
+      message: `Minimum purchase of ${coupon.minPurchase} required`,
+    };
+  }
+
+  let discount = 0;
+
+  if (coupon.type === "percentage") {
+    discount = parseFloat((subtotal * (coupon.value / 100)).toFixed(2));
+  } else if (coupon.type === "fixed") {
+    discount = coupon.value;
+  }
+
+  return {
+    valid: true,
+    discount: discount,
+    type: coupon.type,
+    freeShipping: coupon.type === "free_shipping",
+    message: `Coupon applied successfully`,
+  };
+};
+
+/**
+ * Calculates total with discount, tax, and shipping
+ * @param {Object} cart - Shopping cart
+ * @param {string} couponCode - Optional coupon code
+ * @param {string} shippingMethod - Shipping method
+ * @returns {Object} Detailed price breakdown
+ */
+const calculateTotalWithExtras = (
+  cart,
+  couponCode = null,
+  shippingMethod = "standard"
+) => {
+  if (!cart || typeof cart !== "object") {
+    return { subtotal: 0, discount: 0, tax: 0, shipping: 0, total: 0 };
+  }
+
+  // Calculate subtotal
+  let subtotal = 0;
+  for (const bookId in cart) {
+    const item = cart[bookId];
+    if (item && item.book && item.quantity) {
+      subtotal += item.book.price * item.quantity;
+    }
+  }
+  subtotal = parseFloat(subtotal.toFixed(2));
+
+  // Apply coupon
+  const couponResult = applyCoupon(couponCode, subtotal);
+  const discount = couponResult.valid ? couponResult.discount : 0;
+
+  // Calculate after discount
+  const afterDiscount = subtotal - discount;
+
+  // Calculate tax (10% on discounted price)
+  const tax = parseFloat((afterDiscount * 0.1).toFixed(2));
+
+  // Get shipping cost
+  const shipping = shippingOptions[shippingMethod] || shippingOptions.standard;
+  const shippingCost = couponResult.freeShipping ? 0 : shipping.cost;
+
+  // Calculate final total
+  const total = parseFloat((afterDiscount + tax + shippingCost).toFixed(2));
+
+  return {
+    subtotal,
+    discount,
+    tax,
+    shipping: shippingCost,
+    shippingMethod: shipping.name,
+    total,
+    couponApplied: couponResult.valid,
+    couponMessage: couponResult.message,
+  };
+};
+
+/**
+ * Sends email notification (simulated)
+ * @param {string} recipient - Email recipient
+ * @param {string} subject - Email subject
+ * @param {Object} orderDetails - Order information
+ * @returns {Object} Email status
+ */
+const sendEmailNotification = (recipient, subject, orderDetails) => {
+  if (!recipient || !recipient.includes("@")) {
+    return { sent: false, error: "Invalid email address" };
+  }
+
+  const email = {
+    id: `EMAIL-${Date.now()}`,
+    to: recipient,
+    subject: subject,
+    orderDetails: orderDetails,
+    timestamp: new Date().toISOString(),
+    status: "sent",
+  };
+
+  emailLog.push(email);
+
+  return {
+    sent: true,
+    emailId: email.id,
+    message: `Email sent to ${recipient}`,
+  };
+};
+
+/**
+ * ENHANCED PURCHASE FUNCTION with advanced features
+ * @param {string} searchQuery - Search query
+ * @param {number} bookId - Book ID to purchase
+ * @param {number} quantity - Quantity
+ * @param {string} paymentMethod - Payment method
+ * @param {Object} options - Additional options (coupon, shipping, email)
+ * @returns {Object} Order confirmation with all details
+ */
+const completePurchaseWithExtras = (
+  searchQuery,
+  bookId,
+  quantity,
+  paymentMethod,
+  options = {}
+) => {
+  const {
+    couponCode = null,
+    shippingMethod = "standard",
+    customerEmail = null,
+  } = options;
+  const originalCart = JSON.parse(JSON.stringify(shoppingCart));
+
+  try {
+    // 1. Search for books
+    const searchResults = searchBooks(searchQuery);
+    if (searchResults.length === 0) {
+      throw new Error("No books found matching your search");
+    }
+
+    // 2. Add to cart
+    shoppingCart = {};
+    const cart = addToCart(bookId, quantity);
+
+    // 3. Calculate total with extras
+    const pricing = calculateTotalWithExtras(cart, couponCode, shippingMethod);
+
+    if (pricing.total <= 0) {
+      throw new Error("Invalid cart total");
+    }
+
+    // 4. Process payment
+    const paymentResult = processPayment(pricing.total, paymentMethod);
+
+    if (!paymentResult.success) {
+      shoppingCart = originalCart;
+      throw new Error("Payment processing failed. Please try again.");
+    }
+
+    // 5. Update inventory
+    const inventoryUpdate = updateInventory(cart);
+
+    // 6. Send email notification if provided
+    let emailResult = null;
+    if (customerEmail) {
+      emailResult = sendEmailNotification(customerEmail, "Order Confirmation", {
+        orderId: `ORD-${Date.now()}`,
+        items: cart,
+        pricing: pricing,
+        transactionId: paymentResult.transactionId,
+      });
+    }
+
+    // 7. Clear cart
+    shoppingCart = {};
+
+    // 8. Return comprehensive order confirmation
+    return {
+      success: true,
+      orderId: `ORD-${Date.now()}`,
+      transactionId: paymentResult.transactionId,
+      items: cart,
+      pricing: pricing,
+      inventoryUpdated: inventoryUpdate,
+      emailSent: emailResult ? emailResult.sent : false,
+      emailId: emailResult ? emailResult.emailId : null,
+      message: "Purchase completed successfully!",
+    };
+  } catch (error) {
+    shoppingCart = originalCart;
+    return {
+      success: false,
+      error: error.message,
+      message: "Purchase failed",
+    };
+  }
+};
+
+// Helper to clear email log (for testing)
+const clearEmailLog = () => {
+  emailLog = [];
+};
+
+// Helper to get email log (for testing)
+const getEmailLog = () => {
+  return [...emailLog];
 };
 
 export {
@@ -299,4 +545,13 @@ export {
   resetInventory,
   getCart,
   bookDatabase,
+  // Phase 4 exports
+  applyCoupon,
+  calculateTotalWithExtras,
+  sendEmailNotification,
+  completePurchaseWithExtras,
+  clearEmailLog,
+  getEmailLog,
+  couponDatabase,
+  shippingOptions,
 };

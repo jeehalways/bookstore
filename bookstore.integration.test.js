@@ -8,6 +8,15 @@ import {
   resetCart,
   resetInventory,
   bookDatabase,
+  // Phase 4
+  applyCoupon,
+  calculateTotalWithExtras,
+  sendEmailNotification,
+  completePurchaseWithExtras,
+  clearEmailLog,
+  getEmailLog,
+  couponDatabase,
+  shippingOptions,
 } from "./bookstore.js";
 
 describe("Bookstore Integration Tests", () => {
@@ -280,6 +289,274 @@ describe("Bookstore Integration Tests", () => {
       const cart = addToCart(1, 1); // Adding more of same book
 
       expect(cart[1].quantity).toBe(3);
+    });
+  });
+
+  // Phase 4
+
+  describe("Discount System - Coupon Codes", () => {
+    beforeEach(() => {
+      clearEmailLog();
+    });
+
+    test("should apply percentage discount correctly", () => {
+      const subtotal = 100;
+      const result = applyCoupon("SAVE10", subtotal);
+
+      expect(result.valid).toBe(true);
+      expect(result.discount).toBe(10); // 10% of 100
+    });
+
+    test("should apply fixed discount correctly", () => {
+      const subtotal = 30;
+      const result = applyCoupon("FLAT5", subtotal);
+
+      expect(result.valid).toBe(true);
+      expect(result.discount).toBe(5);
+    });
+
+    test("should reject coupon if minimum purchase not met", () => {
+      const subtotal = 30; // SAVE20 requires 50 minimum
+      const result = applyCoupon("SAVE20", subtotal);
+
+      expect(result.valid).toBe(false);
+      expect(result.discount).toBe(0);
+      expect(result.message).toContain("Minimum purchase");
+    });
+
+    test("should reject invalid coupon code", () => {
+      const result = applyCoupon("INVALID123", 100);
+
+      expect(result.valid).toBe(false);
+      expect(result.message).toContain("Invalid coupon");
+    });
+
+    test("should handle free shipping coupon", () => {
+      const result = applyCoupon("FREESHIP", 50);
+
+      expect(result.valid).toBe(true);
+      expect(result.freeShipping).toBe(true);
+    });
+
+    test("should integrate coupon with total calculation", () => {
+      resetCart();
+      const cart = addToCart(1, 1); // 12.99
+
+      const pricing = calculateTotalWithExtras(cart, "SAVE10", "standard");
+
+      // Subtotal: 12.99
+      // Discount: 1.30 (10%)
+      // After discount: 11.69
+      // Tax: $1.17 (10%)
+      // Shipping: 5.99
+      // Total: 18.85
+      expect(pricing.subtotal).toBe(12.99);
+      expect(pricing.discount).toBe(1.3);
+      expect(pricing.total).toBe(18.85);
+    });
+  });
+
+  describe("Shipping Options Integration", () => {
+    test("should calculate shipping cost for standard shipping", () => {
+      resetCart();
+      const cart = addToCart(1, 1); // $12.99
+
+      const pricing = calculateTotalWithExtras(cart, null, "standard");
+
+      expect(pricing.shipping).toBe(5.99);
+      expect(pricing.shippingMethod).toBe("Standard Shipping");
+    });
+
+    test("should calculate shipping cost for express shipping", () => {
+      resetCart();
+      const cart = addToCart(1, 1);
+
+      const pricing = calculateTotalWithExtras(cart, null, "express");
+
+      expect(pricing.shipping).toBe(12.99);
+      expect(pricing.shippingMethod).toBe("Express Shipping");
+    });
+
+    test("should apply free shipping with coupon", () => {
+      resetCart();
+      const cart = addToCart(1, 1);
+
+      const pricing = calculateTotalWithExtras(cart, "FREESHIP", "express");
+
+      expect(pricing.shipping).toBe(0);
+      expect(pricing.couponApplied).toBe(true);
+    });
+
+    test("should default to standard shipping if invalid method", () => {
+      resetCart();
+      const cart = addToCart(1, 1);
+
+      const pricing = calculateTotalWithExtras(cart, null, "invalid_method");
+
+      expect(pricing.shipping).toBe(5.99);
+    });
+  });
+
+  describe("Email Notification System", () => {
+    beforeEach(() => {
+      clearEmailLog();
+    });
+
+    test("should send email notification successfully", () => {
+      const result = sendEmailNotification(
+        "customer@example.com",
+        "Order Confirmation",
+        { orderId: "TEST123", total: 50 }
+      );
+
+      expect(result.sent).toBe(true);
+      expect(result.emailId).toBeDefined();
+      expect(result.message).toContain("customer@example.com");
+    });
+
+    test("should reject invalid email address", () => {
+      const result = sendEmailNotification("invalid-email", "Test", {});
+
+      expect(result.sent).toBe(false);
+      expect(result.error).toContain("Invalid email");
+    });
+
+    test("should log emails in email log", () => {
+      sendEmailNotification("test1@example.com", "Subject 1", {});
+      sendEmailNotification("test2@example.com", "Subject 2", {});
+
+      const log = getEmailLog();
+      expect(log.length).toBe(2);
+      expect(log[0].to).toBe("test1@example.com");
+      expect(log[1].to).toBe("test2@example.com");
+    });
+
+    test("should include order details in email", () => {
+      const orderDetails = {
+        orderId: "ORD123",
+        total: 99.99,
+        items: { 1: { quantity: 2 } },
+      };
+
+      sendEmailNotification("customer@example.com", "Order", orderDetails);
+
+      const log = getEmailLog();
+      expect(log[0].orderDetails.orderId).toBe("ORD123");
+      expect(log[0].orderDetails.total).toBe(99.99);
+    });
+  });
+
+  describe("Complete Purchase with Advanced Features", () => {
+    beforeEach(() => {
+      clearEmailLog();
+    });
+
+    test("should complete purchase with coupon and email", () => {
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5);
+
+      const result = completePurchaseWithExtras("Gatsby", 1, 1, "credit", {
+        couponCode: "SAVE10",
+        shippingMethod: "standard",
+        customerEmail: "buyer@example.com",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.pricing.discount).toBeGreaterThan(0);
+      expect(result.pricing.shipping).toBe(5.99);
+      expect(result.emailSent).toBe(true);
+      expect(result.emailId).toBeDefined();
+
+      const log = getEmailLog();
+      expect(log.length).toBe(1);
+
+      Math.random = originalRandom;
+    });
+
+    test("should complete purchase without optional features", () => {
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5);
+
+      const result = completePurchaseWithExtras("Gatsby", 1, 1, "credit");
+
+      expect(result.success).toBe(true);
+      expect(result.pricing.discount).toBe(0);
+      expect(result.emailSent).toBe(false);
+
+      Math.random = originalRandom;
+    });
+
+    test("should handle payment failure with advanced features", () => {
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.1); // Payment fails
+
+      const result = completePurchaseWithExtras("Gatsby", 1, 1, "credit", {
+        couponCode: "SAVE10",
+        customerEmail: "buyer@example.com",
+      });
+
+      expect(result.success).toBe(false);
+      expect(result.error).toContain("Payment processing failed");
+
+      // Email should NOT be sent on payment failure
+      const log = getEmailLog();
+      expect(log.length).toBe(0);
+
+      Math.random = originalRandom;
+    });
+
+    test("should calculate correct total with multiple discounts and shipping", () => {
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5);
+
+      resetCart();
+      addToCart(1, 2); // 12.99 x 2 = 25.98
+      const cart = addToCart(2, 1); // 14.99
+      // Subtotal: 40.97
+
+      const pricing = calculateTotalWithExtras(cart, "SAVE10", "express");
+
+      // Discount: 4.10 (10%)
+      // After discount: 36.87
+      // Tax: $3.69 (10%)
+      // Shipping: 12.99
+      // Total: 53.55
+      expect(pricing.discount).toBe(4.1);
+      expect(pricing.total).toBe(53.55);
+
+      Math.random = originalRandom;
+    });
+
+    test("should apply high-value coupon on large purchase", () => {
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5);
+
+      resetCart();
+      addToCart(1, 3); // 12.99 x 3 = 38.97
+      const cart = addToCart(2, 1); // 14.99
+      // Subtotal: 53.96 (meets SAVE20 minimum of 50)
+
+      const pricing = calculateTotalWithExtras(cart, "SAVE20", "standard");
+
+      // Discount: 10.79 (20%)
+      expect(pricing.discount).toBe(10.79);
+      expect(pricing.couponApplied).toBe(true);
+
+      Math.random = originalRandom;
+    });
+
+    test("should not send email if invalid email provided", () => {
+      const originalRandom = Math.random;
+      Math.random = jest.fn(() => 0.5);
+
+      const result = completePurchaseWithExtras("Gatsby", 1, 1, "credit", {
+        customerEmail: "invalid-email",
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.emailSent).toBe(false);
+
+      Math.random = originalRandom;
     });
   });
 });
