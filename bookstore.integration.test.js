@@ -99,9 +99,21 @@ describe("Bookstore Integration Tests", () => {
 
     test("should generate unique transaction IDs", () => {
       const originalRandom = Math.random;
-      Math.random = jest.fn(() => 0.5);
+      // Mock to return different values each call
+      let callCount = 0;
+      Math.random = jest.fn(() => {
+        callCount++;
+        return 0.5 + callCount * 0.01; // Returns 0.51, 0.52, 0.53, etc.
+      });
 
       const result1 = processPayment(10, "credit");
+
+      // Small delay to ensure different timestamp
+      const start = Date.now();
+      while (Date.now() === start) {
+        // Wait for timestamp to change
+      }
+
       const result2 = processPayment(10, "credit");
 
       expect(result1.transactionId).not.toBe(result2.transactionId);

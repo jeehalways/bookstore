@@ -76,7 +76,13 @@ const addToCart = (bookId, quantity) => {
     throw new Error("Quantity must be greater than 0");
   }
 
-  if (quantity > book.stock) {
+  // Calculate total quantity that would be in cart
+  const currentQuantity = shoppingCart[bookId]
+    ? shoppingCart[bookId].quantity
+    : 0;
+  const totalQuantity = currentQuantity + quantity;
+
+  if (totalQuantity > book.stock) {
     throw new Error(`Only ${book.stock} copies available`);
   }
 
@@ -89,7 +95,8 @@ const addToCart = (bookId, quantity) => {
     };
   }
 
-  return { ...shoppingCart };
+  // Return a deep copy to prevent external mutations
+  return JSON.parse(JSON.stringify(shoppingCart));
 };
 
 /**
@@ -98,11 +105,17 @@ const addToCart = (bookId, quantity) => {
  * @returns {number} Total price with tax
  */
 const calculateTotal = (cart) => {
+  if (!cart || typeof cart !== "object") {
+    return 0;
+  }
+
   let subtotal = 0;
 
   for (const bookId in cart) {
     const item = cart[bookId];
-    subtotal += item.book.price * item.quantity;
+    if (item && item.book && item.quantity) {
+      subtotal += item.book.price * item.quantity;
+    }
   }
 
   const tax = subtotal * 0.1;
@@ -128,6 +141,7 @@ const processPayment = (cartTotal, paymentMethod) => {
   }
 
   // Simulate random payment success (80% success rate)
+  // In tests, Math.random can be mocked for predictable results
   const success = Math.random() > 0.2;
 
   if (success) {
@@ -151,7 +165,13 @@ const processPayment = (cartTotal, paymentMethod) => {
  * @returns {Object} Updated inventory status
  */
 const updateInventory = (cart) => {
+  if (!cart || typeof cart !== "object") {
+    throw new Error("Invalid cart object");
+  }
+
   // First, validate all items have sufficient stock
+  // Check stock again because time may have passed
+  // since items were added to cart
   for (const bookId in cart) {
     const item = cart[bookId];
     const book = bookDatabase.find((b) => b.id === parseInt(bookId));
@@ -189,6 +209,9 @@ const updateInventory = (cart) => {
  * @returns {Object} Order confirmation
  */
 const completePurchase = (searchQuery, bookId, quantity, paymentMethod) => {
+  // Store original cart state in case we need to rollback
+  const originalCart = JSON.parse(JSON.stringify(shoppingCart));
+
   try {
     // 1. Search for books
     const searchResults = searchBooks(searchQuery);
@@ -203,17 +226,27 @@ const completePurchase = (searchQuery, bookId, quantity, paymentMethod) => {
     // 3. Calculate total
     const total = calculateTotal(cart);
 
+    if (total <= 0) {
+      throw new Error("Invalid cart total");
+    }
+
     // 4. Process payment
     const paymentResult = processPayment(total, paymentMethod);
 
     if (!paymentResult.success) {
+      // Restore original cart state if payment fails
+      shoppingCart = originalCart;
       throw new Error("Payment processing failed. Please try again.");
     }
 
     // 5. Update inventory (only if payment succeeds)
+    // Re-validate stock before updating (double-check for race conditions)
     const inventoryUpdate = updateInventory(cart);
 
-    // 6. Return order confirmation
+    // 6. Clear the cart after successful purchase
+    shoppingCart = {};
+
+    // 7. Return order confirmation
     return {
       success: true,
       orderId: `ORD-${Date.now()}`,
@@ -224,6 +257,9 @@ const completePurchase = (searchQuery, bookId, quantity, paymentMethod) => {
       message: "Purchase completed successfully!",
     };
   } catch (error) {
+    // Restore cart state on any error
+    shoppingCart = originalCart;
+
     return {
       success: false,
       error: error.message,
@@ -247,6 +283,11 @@ const resetInventory = () => {
   bookDatabase[5].stock = 2;
 };
 
+// Helper function to get current cart (for testing)
+const getCart = () => {
+  return JSON.parse(JSON.stringify(shoppingCart));
+};
+
 export {
   searchBooks,
   addToCart,
@@ -256,5 +297,6 @@ export {
   completePurchase,
   resetCart,
   resetInventory,
+  getCart,
   bookDatabase,
 };
